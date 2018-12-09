@@ -31,6 +31,7 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.UserHandle;
 import android.os.Vibrator;
+import android.pocket.PocketManager;
 import android.provider.Settings;
 
 import com.android.internal.annotations.VisibleForTesting;
@@ -95,6 +96,9 @@ public class Ringer {
     private boolean mIsVibrating = false;
 
     private int torchMode;
+
+    private int mStreamVolume;
+    private boolean mDeviceWasInPocket = false;
 
     /** Initializes the Ringer. */
     @VisibleForTesting
@@ -165,11 +169,24 @@ public class Ringer {
             mRingingCall = foregroundCall;
             Log.addEvent(foregroundCall, LogUtils.Events.START_RINGER);
 
+            final PocketManager pocketManager =
+                    (PocketManager) mContext.getSystemService(Context.POCKET_SERVICE);
+            final boolean isDeviceInPocket = pocketManager != null && pocketManager.isDeviceInPocket();
+
             float startVolume = 0;
             int rampUpTime = 0;
 
             final ContentResolver cr = mContext.getContentResolver();
-            if (Settings.System.getInt(cr,
+            if (isDeviceInPocket && Settings.System.getInt(cr,
+                    Settings.System.MAX_RING_VOLUME_IN_POCKET, 0) != 0) {
+                Log.i(this, "Device is in pocket. Setting ring volume to maximum level.");
+                mDeviceWasInPocket = true;
+                mStreamVolume = audioManager.getStreamVolume(AudioManager.STREAM_RING);
+                final int maxStreamVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_RING);
+                audioManager.setStreamVolume(AudioManager.STREAM_RING, maxStreamVolume, 0);
+                startVolume = 1.0f;
+                rampUpTime = 0;
+            } else if (Settings.System.getInt(cr,
                     Settings.System.INCREASING_RING, 0) != 0) {
                 startVolume = Settings.System.getFloat(cr,
                         Settings.System.INCREASING_RING_START_VOLUME, 0.1f);
@@ -256,6 +273,14 @@ public class Ringer {
 
         mRingtonePlayer.stop();
         torchToggler.stop();
+
+        if (mDeviceWasInPocket) {
+            Log.i(this, "Restoring ring volume level.");
+            AudioManager audioManager =
+                    (AudioManager) mContext.getSystemService(Context.AUDIO_SERVICE);
+            audioManager.setStreamVolume(AudioManager.STREAM_RING, mStreamVolume, 0);
+            mDeviceWasInPocket = false;
+        }
 
         if (mIsVibrating) {
             Log.addEvent(mVibratingCall, LogUtils.Events.STOP_VIBRATOR);
